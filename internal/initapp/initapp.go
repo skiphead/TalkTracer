@@ -163,7 +163,7 @@ func initializeRepositories(cfg *config.Config, logger *slog.Logger) (*Repositor
 	logger.Info("initializing database connection pool")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	pool, err := postgres.NewPool(ctx, cfg.DBConfig, logger)
+	pool, err := postgres.NewPool(ctx, cfg.DBConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database connection pool: %w", err)
 	}
