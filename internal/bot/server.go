@@ -105,10 +105,6 @@ func createTelebot(cfg *config.Config, logger *slog.Logger) (*telebot.Bot, error
 		InsecureSkipVerify: cfg.Telegram.Insecure,
 	}
 
-	if cfg.Telegram.Insecure {
-		logger.Warn("INSECURE: TLS certificate verification is disabled (InsecureSkipVerify=true). Do not use in production!")
-	}
-
 	settings.Client = &http.Client{
 		Timeout: clientTimeout,
 		Transport: &http.Transport{

@@ -3,9 +3,9 @@ package initapp
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/skiphead/go-letopis/internal/bot"
 	storage "github.com/skiphead/go-letopis/internal/domain/repository"
@@ -52,13 +52,13 @@ func Initialize(configPath string) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
-	log.Printf("Config loaded from %s", configPath)
 
 	// Initialize logger with proper output
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
-	logger.Info("Logger initialized")
+	logger.Info("config loaded", slog.String("path", configPath))
+	logger.Info("logger initialized")
 
 	// Validate configuration
 	if err := validateConfig(cfg); err != nil {
@@ -85,7 +85,7 @@ func Initialize(configPath string) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bot: %w", err)
 	}
-	logger.Info("Bot initialized", "token_prefix", cfg.Telegram.Token[:10])
+	logger.Info("bot initialized")
 
 	return &App{
 		Config:       cfg,
@@ -132,7 +132,7 @@ func initializeClients(cfg *config.Config, logger *slog.Logger) (*Clients, error
 		return nil, fmt.Errorf("logger is required")
 	}
 
-	logger.Info("Initializing Salute Speech client")
+	logger.Info("initializing salute speech client")
 	saluteSpeechClient, err := salute.NewClient(
 		cfg.SaluteSpeech.ClientID,
 		cfg.SaluteSpeech.ClientSecret,
@@ -142,7 +142,7 @@ func initializeClients(cfg *config.Config, logger *slog.Logger) (*Clients, error
 		return nil, fmt.Errorf("failed to create Salute Speech client: %w", err)
 	}
 
-	logger.Info("Initializing GigaChat client")
+	logger.Info("initializing gigachat client")
 	gigaChatClient, err := gigachatservice.NewClient(
 		cfg.GigaChat.ClientID,
 		cfg.GigaChat.ClientSecret,
@@ -160,17 +160,19 @@ func initializeClients(cfg *config.Config, logger *slog.Logger) (*Clients, error
 
 // initializeRepositories initializes database connection and repositories.
 func initializeRepositories(cfg *config.Config, logger *slog.Logger) (*Repositories, error) {
-	logger.Info("Initializing database connection pool")
-	pool, err := postgres.NewPool(context.Background(), cfg.DBConfig)
+	logger.Info("initializing database connection pool")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := postgres.NewPool(ctx, cfg.DBConfig, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database connection pool: %w", err)
 	}
 
-	logger.Info("Initializing repositories")
+	logger.Info("initializing repositories")
 	meetingRepo := storage.NewMeetingRepository(pool, logger)
 	userRepo := storage.NewUserRepository(pool, logger)
 
-	logger.Info("Storage initialized", "database", cfg.DBConfig.DBName)
+	logger.Info("storage initialized", slog.String("database", cfg.DBConfig.DBName))
 
 	return &Repositories{
 		Meeting: meetingRepo,
@@ -180,7 +182,7 @@ func initializeRepositories(cfg *config.Config, logger *slog.Logger) (*Repositor
 
 // initializeUseCases initializes all application use cases.
 func initializeUseCases(repos *Repositories, clients *Clients, logger *slog.Logger) *UseCases {
-	logger.Info("Initializing use cases")
+	logger.Info("initializing use cases")
 
 	aiUseCase := usecase.NewAIUseCase(
 		repos.User,
@@ -207,12 +209,12 @@ func (a *App) Run(ctx context.Context) error {
 		a.Bot.Start(ctx)
 	}()
 
-	a.Logger.Info("Bot is running... Press Ctrl+C to stop")
+	a.Logger.Info("bot is running... press Ctrl+C to stop")
 
 	// Wait for context cancellation
 	<-ctx.Done()
 	a.Bot.Stop()
-	a.Logger.Info("Bot stopped gracefully")
+	a.Logger.Info("bot stopped gracefully")
 
 	return nil
 }
