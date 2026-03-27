@@ -56,6 +56,22 @@ func NewClient(clientID, clientSecret string, logger *slog.Logger) (Client, erro
 
 // Completion sends a chat completion request to GigaChat.
 func (s *clientImpl) Completion(ctx context.Context, systemContent, userContent string) (*gigachat.ChatResponse, error) {
+	// Validate user content
+	if userContent == "" {
+		err := fmt.Errorf("userContent cannot be empty")
+		s.logger.ErrorContext(ctx, "validation failed",
+			slog.String("error", err.Error()),
+		)
+		return nil, err
+	}
+
+	// Log request
+	s.logger.InfoContext(ctx, "sending completion request",
+		slog.Int("system_content_length", len(systemContent)),
+		slog.Int("user_content_length", len(userContent)),
+		slog.String("model", gigachat.ModelGigaChatProPreview.String()),
+	)
+
 	chatReq := &gigachat.ChatRequest{
 		Model: gigachat.ModelGigaChatProPreview.String(),
 		Messages: []gigachat.Message{
@@ -70,12 +86,37 @@ func (s *clientImpl) Completion(ctx context.Context, systemContent, userContent 
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Use provided context with timeout instead of context.Background()
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	response, err := s.clientChat.Completion(ctx, chatReq)
+	startTime := time.Now()
+	response, err := s.clientChat.Completion(ctxWithTimeout, chatReq)
+	duration := time.Since(startTime)
+
 	if err != nil {
-		return nil, err
+		// Log error with context and wrap it with additional context
+		s.logger.ErrorContext(ctx, "completion request failed",
+			slog.String("error", err.Error()),
+			slog.Int64("duration_ms", duration.Milliseconds()),
+			slog.Int("system_content_length", len(systemContent)),
+			slog.Int("user_content_length", len(userContent)),
+		)
+		// Wrap error with context
+		return nil, fmt.Errorf("gigachat completion failed: %w", err)
+	}
+
+	// Log successful response
+	if response != nil && len(response.Choices) > 0 {
+		s.logger.InfoContext(ctx, "completion request succeeded",
+			slog.Int64("duration_ms", duration.Milliseconds()),
+			slog.Int("response_length", len(response.Choices[0].Message.Content)),
+			slog.String("finish_reason", string(response.Choices[0].FinishReason)),
+		)
+	} else {
+		s.logger.WarnContext(ctx, "completion request succeeded but response is empty",
+			slog.Int64("duration_ms", duration.Milliseconds()),
+		)
 	}
 
 	return response, nil

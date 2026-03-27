@@ -30,6 +30,17 @@ type clientImpl struct {
 
 // NewClient creates a new Salute Speech client instance.
 func NewClient(clientID, clientSecret string, logger *slog.Logger) (Client, error) {
+	// Input validation
+	if clientID == "" {
+		return nil, fmt.Errorf("clientID cannot be empty")
+	}
+	if clientSecret == "" {
+		return nil, fmt.Errorf("clientSecret cannot be empty")
+	}
+	if logger == nil {
+		return nil, fmt.Errorf("logger cannot be nil")
+	}
+
 	basicAuth := client.GenerateBasicAuthKey(clientID, clientSecret)
 
 	// Create OAuth client
@@ -64,41 +75,78 @@ func NewClient(clientID, clientSecret string, logger *slog.Logger) (Client, erro
 
 // CreateTask creates a new recognition task.
 func (s *clientImpl) CreateTask(ctx context.Context, req *async.Request) (*async.Response, error) {
+	// Input validation
+	if req == nil {
+		return nil, fmt.Errorf("request cannot be nil")
+	}
+	if req.RequestFileID == "" {
+		return nil, fmt.Errorf("request file ID cannot be empty")
+	}
+
 	resp, err := s.clientAsync.CreateTask(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create task: %w", err)
 	}
 	return resp, nil
 }
 
 // WaitForResult waits for the recognition task to complete.
 func (s *clientImpl) WaitForResult(ctx context.Context, responseResultID string) (*async.TaskResult, error) {
+	// Input validation
+	if responseResultID == "" {
+		return nil, fmt.Errorf("response result ID cannot be empty")
+	}
+
 	result, err := s.clientAsync.WaitForResult(ctx, responseResultID, 2*time.Second, 5*time.Minute)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to wait for result: %w", err)
 	}
 	return result, nil
 }
 
 // ExtractText extracts text from the recognition result.
 func (s *clientImpl) ExtractText(ctx context.Context, responseFileID string) (string, error) {
+	// Input validation
+	if responseFileID == "" {
+		return "", fmt.Errorf("response file ID cannot be empty")
+	}
+
 	byteData, err := s.clientAsync.DownloadTaskResult(ctx, responseFileID)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to download task result: %w", err)
 	}
-	return ExtractTextFromResults(byteData)
+
+	text, err := ExtractTextFromResults(byteData)
+	if err != nil {
+		return "", fmt.Errorf("failed to extract text from results: %w", err)
+	}
+	return text, nil
 }
 
 // Upload uploads an audio file for recognition.
 func (s *clientImpl) Upload(ctx context.Context, pathAudioFile string) (*async.Request, error) {
+	// Input validation
+	if pathAudioFile == "" {
+		return nil, fmt.Errorf("audio file path cannot be empty")
+	}
+
 	audioType, detectErr := utils.DetectAudioContentType(pathAudioFile)
 	if detectErr != nil {
-		s.logger.Error("Failed to detect audio type", slog.String("error", detectErr.Error()))
+		s.logger.Error("Failed to detect audio type",
+			slog.String("error", detectErr.Error()),
+			slog.String("path", pathAudioFile))
+
+		audioType = "audio/ogg"
+		s.logger.Warn("Using default audio type", slog.String("audio_type", string(audioType)))
 	}
 
 	uploadResp, err := s.clientUpload.UploadFromFile(ctx, pathAudioFile, audioType)
 	if err != nil {
-		return nil, fmt.Errorf("failed to upload audio: %w", err)
+		return nil, fmt.Errorf("failed to upload audio file %s: %w", pathAudioFile, err)
+	}
+
+	if uploadResp == nil || uploadResp.Result.RequestFileID == "" {
+		return nil, fmt.Errorf("upload response is invalid: missing request file ID")
 	}
 
 	return &async.Request{
