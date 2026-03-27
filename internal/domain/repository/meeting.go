@@ -180,19 +180,21 @@ func (r *meetingRepository) SearchByKeywords(ctx context.Context, req entity.Sea
 	}
 
 	// Build tsQuery from keywords using plainto_tsquery
-	tsQuery := strings.Join(req.Keywords, " ")
+	tsQuery := strings.Join(req.Keywords, " & ")
 
 	query := `
-		SELECT m.id, m.user_id, m.transcription
-		FROM meetings m
-		INNER JOIN users u ON m.user_id = u.id
-		WHERE u.telegram_id = $1
-		AND to_tsvector('russian', COALESCE(m.transcription, '')) @@ plainto_tsquery('russian', $2)
-		ORDER BY ts_rank(to_tsvector('russian', COALESCE(m.transcription, '')), plainto_tsquery('russian', $2)) DESC
-		LIMIT $3
+		SELECT id, user_id, transcription
+		FROM meetings
+		WHERE user_id = (
+			SELECT id
+			FROM users
+			WHERE telegram_id = $1
+		)
+		AND to_tsvector('russian', transcription) @@ to_tsquery('russian', $2)
+		ORDER BY ts_rank(to_tsvector('russian', transcription), to_tsquery('russian', $2)) DESC
 	`
 
-	rows, err := r.pool.Query(ctx, query, req.UserID, tsQuery, req.Limit)
+	rows, err := r.pool.Query(ctx, query, req.UserID, tsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute search query: %w", err)
 	}
