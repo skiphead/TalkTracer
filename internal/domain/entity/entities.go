@@ -38,6 +38,7 @@ type TranscriptionRecord struct {
 type SearchRequest struct {
 	UserID   int64    // User requesting the search
 	Keywords []string // Keywords to search for
+	Limit    int
 }
 
 // Message represents a chat message to be stored.

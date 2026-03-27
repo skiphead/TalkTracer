@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/skiphead/go-letopis/internal/domain/entity"
 )
+
+// ErrUserNotFound is returned when a user is not found in the database.
+var ErrUserNotFound = errors.New("user not found")
 
 // UserRepository defines the interface for user data operations.
 type UserRepository interface {
@@ -34,21 +38,27 @@ func NewUserRepository(db *pgxpool.Pool, logger *slog.Logger) UserRepository {
 // scanUser scans a single user row from the database.
 func (r *userRepository) scanUser(row pgx.Row) (*entity.User, error) {
 	var user entity.User
+	var userName, firstName, lastName sql.NullString
 
 	err := row.Scan(
-		&user.ID,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-		&user.TelegramID,
-		&user.UserName,
-		&user.FirstName,
-		&user.LastName,
+		&user.ID, &user.CreatedAt, &user.UpdatedAt, &user.TelegramID,
+		&userName, &firstName, &lastName,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
+			return nil, ErrUserNotFound
 		}
-		return nil, err
+		return nil, fmt.Errorf("failed to scan user: %w", err)
+	}
+
+	if userName.Valid {
+		user.UserName = userName.String
+	}
+	if firstName.Valid {
+		user.FirstName = firstName.String
+	}
+	if lastName.Valid {
+		user.LastName = lastName.String
 	}
 
 	return &user, nil
@@ -58,6 +68,11 @@ func (r *userRepository) scanUser(row pgx.Row) (*entity.User, error) {
 func (r *userRepository) Create(ctx context.Context, user *entity.User) (*entity.User, error) {
 	if user == nil {
 		return nil, errors.New("user is nil")
+	}
+
+	// Validate required fields
+	if user.TelegramID == 0 {
+		return nil, errors.New("telegram_id is required and cannot be 0")
 	}
 
 	sqlQuery := `INSERT INTO users (
@@ -71,15 +86,38 @@ func (r *userRepository) Create(ctx context.Context, user *entity.User) (*entity
 		now(), now(), $1, $2, $3, $4
 	) RETURNING id, created_at, updated_at, telegram_id, username, first_name, last_name`
 
-	row := r.pool.QueryRow(ctx, sqlQuery, user.TelegramID, user.UserName, user.FirstName, user.LastName)
+	// Handle nil values for optional fields
+	var userName, firstName, lastName any
+	if user.UserName == "" {
+		userName = nil
+	} else {
+		userName = user.UserName
+	}
+	if user.FirstName == "" {
+		firstName = nil
+	} else {
+		firstName = user.FirstName
+	}
+	if user.LastName == "" {
+		lastName = nil
+	} else {
+		lastName = user.LastName
+	}
 
-	return r.scanUser(row)
+	row := r.pool.QueryRow(ctx, sqlQuery, user.TelegramID, userName, firstName, lastName)
+
+	createdUser, err := r.scanUser(row)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	return createdUser, nil
 }
 
 // Get retrieves a user by Telegram ID.
 func (r *userRepository) Get(ctx context.Context, telegramID int64) (*entity.User, error) {
 	if telegramID == 0 {
-		return nil, fmt.Errorf("telegram id is required")
+		return nil, errors.New("telegram_id is required and cannot be 0")
 	}
 
 	query := `SELECT id, created_at, updated_at, telegram_id, username, first_name, last_name 
@@ -88,5 +126,13 @@ func (r *userRepository) Get(ctx context.Context, telegramID int64) (*entity.Use
 
 	row := r.pool.QueryRow(ctx, query, telegramID)
 
-	return r.scanUser(row)
+	user, err := r.scanUser(row)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	return user, nil
 }
